@@ -30,7 +30,8 @@ export function computeDeltas(nlp, action, gameState) {
     'Hire': { growth: 3, ethics: 3, burnout: -12, pr: 2, funding: -15 }
   };
   
-  deltas = { ...actionEffects[action] } || { ...actionEffects['Build'] };
+  const baseEffects = actionEffects[action] ?? actionEffects['Build'];
+  deltas = { ...baseEffects };
   
   // NLP modifiers (sentiment, buzzword, feasibility influence outcomes)
   deltas.growth += (sentiment - 50) * 0.15;

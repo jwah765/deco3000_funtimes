@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Founder Burnout Simulator</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
@@ -13,42 +13,64 @@
       <div class="setup-container">
         <h1>⚡ Founder Burnout Simulator</h1>
         <p class="subtitle">Survive 26 weeks without collapsing, selling out, or pivoting to Web3.</p>
-        
-        <div class="form-group">
-          <label>Company Name</label>
-          <input type="text" id="companyName" placeholder="Enter your doomed venture" value="StartupCo">
+
+        <div class="setup-tabs">
+          <button class="setup-tab active" data-tab="setup-form">Setup</button>
+          <button class="setup-tab" data-tab="setup-instructions">How to Play</button>
         </div>
         
-        <div class="form-group">
-          <label>Industry</label>
-          <select id="industry">
-            <option value="Software">Software (balanced)</option>
-            <option value="Healthcare">Healthcare (slow growth, ethical)</option>
-            <option value="Finance">Finance (funding boost, ethical risk)</option>
-            <option value="Electronics">Electronics (fast growth, high debt)</option>
-          </select>
+        <div id="setup-form" class="setup-panel active">
+          <div class="form-group">
+            <label>Company Name</label>
+            <input type="text" id="companyName" placeholder="Enter your doomed venture" value="StartupCo">
+          </div>
+          
+          <div class="form-group">
+            <label>Industry</label>
+            <select id="industry">
+              <option value="Software">Software (balanced)</option>
+              <option value="Healthcare">Healthcare (slow growth, ethical)</option>
+              <option value="Finance">Finance (funding boost, ethical risk)</option>
+              <option value="Electronics">Electronics (fast growth, high debt)</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label>Technology</label>
+            <select id="tech">
+              <option value="Software">Software</option>
+              <option value="AI/Automation">AI/Automation (PR boost, ethics risk)</option>
+              <option value="Physical Product">Physical Product (slower, stable)</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label>Founder Traits (pick 2)</label>
+            <div id="traits">
+              <label class="trait"><input type="checkbox" value="Ambition"> Ambition (+PR, +burnout)</label>
+              <label class="trait"><input type="checkbox" value="Integrity"> Integrity (protects ethics)</label>
+              <label class="trait"><input type="checkbox" value="Charisma"> Charisma (VC likes you)</label>
+              <label class="trait"><input type="checkbox" value="Resilience"> Resilience (-burnout resist)</label>
+            </div>
+          </div>
+          
+          <button id="startGame" class="btn-primary">Begin the Grind</button>
         </div>
-        
-        <div class="form-group">
-          <label>Technology</label>
-          <select id="tech">
-            <option value="Software">Software</option>
-            <option value="AI/Automation">AI/Automation (PR boost, ethics risk)</option>
-            <option value="Physical Product">Physical Product (slower, stable)</option>
-          </select>
-        </div>
-        
-        <div class="form-group">
-          <label>Founder Traits (pick 2)</label>
-          <div id="traits">
-            <label class="trait"><input type="checkbox" value="Ambition"> Ambition (+PR, +burnout)</label>
-            <label class="trait"><input type="checkbox" value="Integrity"> Integrity (protects ethics)</label>
-            <label class="trait"><input type="checkbox" value="Charisma"> Charisma (VC likes you)</label>
-            <label class="trait"><input type="checkbox" value="Resilience"> Resilience (-burnout resist)</label>
+
+        <div id="setup-instructions" class="setup-panel">
+          <div class="instructions">
+            <h2>📘 How to Play</h2>
+            <ol>
+              <li>Complete the setup to define your doomed-but-hopeful startup.</li>
+              <li>Each week, write a short update and choose a focus action.</li>
+              <li>The AI (or local fallback) scores sentiment, buzzwords, and feasibility, then updates meters.</li>
+              <li>Keep Growth, Funding, Ethics, PR, and Burnout in balance for 26 rounds.</li>
+              <li>NPC feedback, advisor tips, and headlines react to your progress.</li>
+              <li>Avoid burnout &gt; 80 or funding &lt; 0, and chase the ending you're after.</li>
+            </ol>
+            <p class="instructions-note">Tip: Specific, metric-heavy updates tend to score better than vague hype.</p>
           </div>
         </div>
-        
-        <button id="startGame" class="btn-primary">Begin the Grind</button>
       </div>
     </div>
 
@@ -59,6 +81,9 @@
           <h2 id="phaseTitle">Week 1: Gloomy Monday</h2>
           <div class="company-info">
             <span id="companyDisplay"></span> • Round <span id="roundDisplay">1</span>/26
+          </div>
+          <div id="progress" class="progress-bar">
+            <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
           </div>
           
           <textarea 
@@ -72,32 +97,32 @@ Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted bu
           <div class="char-count"><span id="charCount">0</span>/300</div>
           
           <div id="actions">
-            <label class="action-btn">
+            <label class="trait action-btn">
               <input type="radio" name="action" value="Build" checked>
               <span>🔨 Build</span>
               <small>+Growth, +Burnout</small>
             </label>
-            <label class="action-btn">
+            <label class="trait action-btn">
               <input type="radio" name="action" value="PR">
               <span>📢 PR</span>
               <small>+PR, +Funding</small>
             </label>
-            <label class="action-btn">
+            <label class="trait action-btn">
               <input type="radio" name="action" value="Growth Hack">
               <span>📈 Growth Hack</span>
               <small>++Growth, --Ethics</small>
             </label>
-            <label class="action-btn">
+            <label class="trait action-btn">
               <input type="radio" name="action" value="Fundraise">
               <span>💰 Fundraise</span>
               <small>++Funding, +Burnout</small>
             </label>
-            <label class="action-btn">
+            <label class="trait action-btn">
               <input type="radio" name="action" value="Refactor">
               <span>🔧 Refactor</span>
               <small>+Ethics, -Burnout</small>
             </label>
-            <label class="action-btn">
+            <label class="trait action-btn">
               <input type="radio" name="action" value="Hire">
               <span>👥 Hire</span>
               <small>-Burnout, --Funding</small>
@@ -109,47 +134,55 @@ Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted bu
         </div>
 
         <div class="right-panel">
-          <div id="meters">
-            <div class="meter">
-              <div class="meter-header">
-                <label>📈 Growth</label>
-                <span class="meter-val" id="growth-val">35</span>
-              </div>
-              <div class="bar"><span class="bar-fill growth" id="growth-bar" style="width: 35%"></span></div>
-            </div>
-            
-            <div class="meter">
-              <div class="meter-header">
-                <label>⚖️ Ethics</label>
-                <span class="meter-val" id="ethics-val">60</span>
-              </div>
-              <div class="bar"><span class="bar-fill ethics" id="ethics-bar" style="width: 60%"></span></div>
-            </div>
-            
-            <div class="meter">
-              <div class="meter-header">
-                <label>🔥 Burnout</label>
-                <span class="meter-val" id="burnout-val">25</span>
-              </div>
-              <div class="bar"><span class="bar-fill burnout" id="burnout-bar" style="width: 25%"></span></div>
-            </div>
-            
-            <div class="meter">
-              <div class="meter-header">
-                <label>📰 PR</label>
-                <span class="meter-val" id="pr-val">10</span>
-              </div>
-              <div class="bar"><span class="bar-fill pr" id="pr-bar" style="width: 10%"></span></div>
-            </div>
-            
-            <div class="meter">
-              <div class="meter-header">
-                <label>💵 Funding</label>
-                <span class="meter-val" id="funding-val">50</span>
-              </div>
-              <div class="bar"><span class="bar-fill funding" id="funding-bar" style="width: 50%"></span></div>
-            </div>
+          <div id="roundSummary" class="panel summary-panel">
+            <div class="summary-headline" id="summaryHeadline">Submit your first update to see how the world reacts.</div>
+            <div class="summary-cta" id="summaryCTA">Balance growth, ethics, burnout, funding, and PR.</div>
+            <div class="summary-highlight" id="summaryHighlight"></div>
+            <div id="story" class="summary-story"></div>
           </div>
+
+          <div id="analysisDetails" class="details-container">
+            <div id="meters" class="stats-grid">
+              <div class="stat" id="stat-growth">
+                <div class="stat-header">
+                  <span class="label">📈 Growth</span>
+                  <span class="value" id="growth-val">35</span>
+                </div>
+                <div class="bar"><div class="fill growth" id="growth-fill" style="width: 35%"></div></div>
+              </div>
+              
+              <div class="stat" id="stat-ethics">
+                <div class="stat-header">
+                  <span class="label">⚖️ Ethics</span>
+                  <span class="value" id="ethics-val">60</span>
+                </div>
+                <div class="bar"><div class="fill ethics" id="ethics-fill" style="width: 60%"></div></div>
+              </div>
+              
+              <div class="stat" id="stat-burnout">
+                <div class="stat-header">
+                  <span class="label">🔥 Burnout</span>
+                  <span class="value" id="burnout-val">25</span>
+                </div>
+                <div class="bar"><div class="fill burnout" id="burnout-fill" style="width: 25%"></div></div>
+              </div>
+              
+              <div class="stat" id="stat-pr">
+                <div class="stat-header">
+                  <span class="label">📰 PR</span>
+                  <span class="value" id="pr-val">10</span>
+                </div>
+                <div class="bar"><div class="fill pr" id="pr-fill" style="width: 10%"></div></div>
+              </div>
+              
+              <div class="stat" id="stat-funding">
+                <div class="stat-header">
+                  <span class="label">💵 Funding</span>
+                  <span class="value" id="funding-val">50</span>
+                </div>
+                <div class="bar"><div class="fill funding" id="funding-fill" style="width: 50%"></div></div>
+              </div>
+            </div>
           
           <div id="explainability" class="panel">
             <h3>📊 Analysis</h3>
@@ -158,6 +191,14 @@ Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted bu
               <div>Buzzwords: <strong id="buzzword">—</strong></div>
               <div>Feasibility: <strong id="feasibility">—</strong></div>
             </div>
+            <div class="analysis-source">Model: <strong id="analysisSource">—</strong></div>
+            <div class="analysis-tip">
+              Advisor Tip: <span id="advisorTip">—</span>
+            </div>
+            <div class="analysis-headline">
+              Headline: <span id="worldHeadline">—</span>
+            </div>
+            <div class="analysis-source secondary">Insights: <strong id="insightsSource">—</strong></div>
           </div>
 
           <div id="npcs" class="panel">
@@ -169,6 +210,7 @@ Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted bu
               <strong>Employee:</strong> <span id="emp-line">"Let's ship something."</span>
             </div>
           </div>
+          </div>
         </div>
       </div>
     </div>
@@ -179,6 +221,7 @@ Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted bu
         <h1 id="endingTitle">Game Over</h1>
         <p id="endingText"></p>
         <div id="finalStats"></div>
+        <div id="endingPostMortem" class="post-mortem"></div>
         <button id="restart" class="btn-primary">Play Again</button>
       </div>
     </div>
