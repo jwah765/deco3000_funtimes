@@ -22,15 +22,15 @@ app.use(express.static('public'));
 
 app.post('/api/process-round', async (req, res) => {
   try {
-    const { text, action, gameState } = req.body;
+    const { text, gameState, apiKey } = req.body;
     
-    console.log(`Processing round ${gameState.round}: ${action}`);
+    console.log(`Processing round ${gameState.round}`);
     
-    // Call Gemini for NLP analysis
-    const nlp = await analyzeUpdate(text, action, gameState);
+    // Call OpenAI for NLP analysis
+    const nlp = await analyzeUpdate(text, gameState, apiKey);
     
     // Compute game logic
-    const deltas = computeDeltas(nlp, action, gameState);
+    const deltas = computeDeltas(nlp, text, gameState);
     const newMeters = applyDeltas(deltas, gameState);
     const newRound = gameState.round + 1;
     
@@ -42,7 +42,6 @@ app.post('/api/process-round', async (req, res) => {
       previousNarrative,
       deltas,
       newMeters,
-      action,
       text,
       nlp
     );
@@ -51,7 +50,7 @@ app.post('/api/process-round', async (req, res) => {
       meters: newMeters,
       round: newRound,
       narrative: updatedNarrative,
-      lastAction: action
+      lastIntent: nlp.intent
     };
     
     // Generate narrative beats
@@ -62,7 +61,7 @@ app.post('/api/process-round', async (req, res) => {
       deltas,
       nlp,
       text,
-      action
+      apiKey
     );
     if (milestoneEvents.length) {
       updatedNarrative.milestones = updatedNarrative.milestones.map(ms => {
@@ -81,25 +80,26 @@ app.post('/api/process-round', async (req, res) => {
       deltas,
       nlp,
       text,
-      action,
       updatedNarrative,
-      milestoneEvents
+      milestoneEvents,
+      apiKey
     );
     updatedNarrative.sceneLog = [...(updatedNarrative.sceneLog || []), sceneCard].slice(-12);
     
     // Generate NPC dialogue
-    const npcLines = await generateNPCDialogue(stateForNarrative, deltas);
+    const npcLines = await generateNPCDialogue(stateForNarrative, deltas, nlp.intent, apiKey);
     
     // Advisor tips and world headline
-    const insights = await generateInsights(stateForNarrative, deltas, nlp, text, action);
+    const insights = await generateInsights(stateForNarrative, deltas, nlp, text, apiKey);
     
     const historyForPost = Array.isArray(gameState.history) ? [...gameState.history] : [];
-    historyForPost.push({ text, action, deltas, nlp, meters: newMeters });
+    historyForPost.push({ text, intent: nlp.intent, deltas, nlp, meters: newMeters });
     const postMortem = ending
       ? await generatePostMortem(
           historyForPost,
           { meters: newMeters, narrative: updatedNarrative },
-          ending
+          ending,
+          apiKey
         )
       : null;
     
@@ -115,13 +115,15 @@ app.post('/api/process-round', async (req, res) => {
         ...gameState,
         round: newRound,
         meters: newMeters,
-        narrative: updatedNarrative
+        narrative: updatedNarrative,
+        lastIntent: nlp.intent
       },
       narrative: updatedNarrative,
       npcLines,
       ending,
       postMortem,
-      phaseTitle: getPhaseTitle(newRound)
+      phaseTitle: getPhaseTitle(newRound),
+      intentSummary: nlp.scenario?.description || null
     });
   } catch (error) {
     console.error('Error processing round:', error);

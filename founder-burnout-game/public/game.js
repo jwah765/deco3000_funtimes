@@ -42,11 +42,13 @@ function createDefaultNarrative() {
   };
 }
 
+let userApiKey = sessionStorage.getItem('aiKey') || '';
+
 let gameState = {
   round: 1,
   company: { name: "", industry: "Software", tech: "Software" },
   traits: [],
-  meters: { growth: 35, ethics: 60, burnout: 25, pr: 10, funding: 50 },
+  meters: { ethics: 60, burnout: 25, funding: 50 },
   history: [],
   narrative: createDefaultNarrative()
 };
@@ -57,54 +59,18 @@ let reactionOverlay = null;
 let audioCtx = null;
 
 const STAT_CONFIG = {
-  growth: { fillId: 'growth-fill', valueId: 'growth-val', statId: 'stat-growth', positiveMetric: true },
   ethics: { fillId: 'ethics-fill', valueId: 'ethics-val', statId: 'stat-ethics', positiveMetric: true },
   burnout: { fillId: 'burnout-fill', valueId: 'burnout-val', statId: 'stat-burnout', positiveMetric: false },
-  pr: { fillId: 'pr-fill', valueId: 'pr-val', statId: 'stat-pr', positiveMetric: true },
   funding: { fillId: 'funding-fill', valueId: 'funding-val', statId: 'stat-funding', positiveMetric: true }
 };
 
-const ACTION_NARRATIVES = {
-  Build: 'You vanished into sprint tunnels, chasing the next feature spark.',
-  PR: 'You worked the inbox, weaving a story that might just land on TechCrunch.',
-  'Growth Hack': 'You unleashed another wild experiment hoping the metrics explode upward.',
-  Fundraise: 'Deck in hand, you charmed rooms of investors while suppressing imposter syndrome.',
-  Refactor: 'You hit pause on features to clean brittle code that threatened to crumble.',
-  Hire: 'You expanded the crew, betting that more hands will steady the rocket.'
+const INTENT_FALLBACKS = {
+  funding: 'You chased fresh capital and hoped the promises land.',
+  rest: 'You prioritized recovery before the team mutinied.',
+  ethics: 'You doubled down on doing things the right way.',
+  crisis: 'You scrambled to clean up a mess before anyone noticed.',
+  default: 'Another brutal week in founder land, but you keep moving.'
 };
-
-const RANDOM_EVENTS = [
-  {
-    title: 'Influencer shout-out',
-    text: 'A niche influencer tweeted an unsolicited rave about your product.',
-    effects: { growth: 6, pr: 8, funding: 4 }
-  },
-  {
-    title: 'Production fire drill',
-    text: 'An overnight outage sent support into chaos and your team into overdrive.',
-    effects: { growth: -4, burnout: 10, pr: -3 }
-  },
-  {
-    title: 'Team offsite breakthrough',
-    text: 'A scrappy offsite loosened shoulders and unlocked a smarter roadmap.',
-    effects: { burnout: -12, ethics: 5 }
-  },
-  {
-    title: 'Regulatory scare',
-    text: 'A regulator requested information about your latest growth stunt.',
-    effects: { ethics: -8, funding: -5, pr: -4 }
-  },
-  {
-    title: 'Enterprise pilot',
-    text: 'A Fortune 500 signed a pilot that could redefine your runway.',
-    effects: { funding: 12, growth: 5, burnout: 3 }
-  },
-  {
-    title: 'Culture hero moment',
-    text: 'An engineer shipped a quality-of-life fix that the whole team cheered.',
-    effects: { burnout: -8, ethics: 4 }
-  }
-];
 
 // Setup screen logic
 document.getElementById('startGame').addEventListener('click', () => {
@@ -113,6 +79,16 @@ document.getElementById('startGame').addEventListener('click', () => {
   const tech = document.getElementById('tech').value;
   const traitBoxes = document.querySelectorAll('#traits input[type="checkbox"]:checked');
   const traits = Array.from(traitBoxes).map(cb => cb.value);
+  const apiKeyInput = document.getElementById('aiKey');
+  if (apiKeyInput) {
+    const keyValue = apiKeyInput.value.trim();
+    userApiKey = keyValue;
+    if (keyValue) {
+      sessionStorage.setItem('aiKey', keyValue);
+    } else {
+      sessionStorage.removeItem('aiKey');
+    }
+  }
   
   if (traits.length !== 2) {
     alert('Please select exactly 2 traits!');
@@ -145,6 +121,10 @@ document.querySelectorAll('.setup-tab').forEach(tab => {
 // Game screen logic
 const updateTextArea = document.getElementById('updateText');
 const charCountSpan = document.getElementById('charCount');
+const aiKeyInput = document.getElementById('aiKey');
+if (aiKeyInput && userApiKey) {
+  aiKeyInput.value = userApiKey;
+}
 
 updateTextArea.addEventListener('input', () => {
   charCountSpan.textContent = updateTextArea.value.length;
@@ -159,20 +139,11 @@ const detailsContainer = document.getElementById('analysisDetails');
 
 document.getElementById('submitRound').addEventListener('click', async () => {
   const text = updateTextArea.value.trim();
-  const actionRadio = document.querySelector('input[name="action"]:checked');
   
   if (!text) {
     alert('Write an update first!');
     return;
   }
-  
-  if (!actionRadio) {
-    alert('Choose an action!');
-    return;
-  }
-  
-  const action = actionRadio.value;
-  gameState.lastAction = action;
   
   // Disable submit button and show loading
   const submitBtn = document.getElementById('submitRound');
@@ -181,12 +152,15 @@ document.getElementById('submitRound').addEventListener('click', async () => {
   loadingMsg.classList.add('active');
   
   try {
-    const result = await processRound(text, action);
+    const result = await processRound(text);
     console.info('Analysis source:', result.analysisSource);
     if (!result.insights) {
       const stateForInsights = result.newState ? cloneState(result.newState) : cloneState(gameState);
-      result.insights = generateInsightsLocal(stateForInsights, action, result.deltas || {}, result.nlp || {}, text);
+      result.insights = generateInsightsLocal(stateForInsights, result.deltas || {}, result.nlp || {}, text);
       result.insightsSource = result.insights.source || 'unknown';
+    }
+    if (!result.intentSummary) {
+      result.intentSummary = createIntentSummary(result.nlp?.intent, text);
     }
     
     // Update game state
@@ -199,7 +173,6 @@ document.getElementById('submitRound').addEventListener('click', async () => {
     gameState.history.push({
       round: gameState.round - 1,
       text,
-      action,
       ...result.nlp,
       analysisSource: result.analysisSource,
       insights: result.insights,
@@ -213,18 +186,16 @@ document.getElementById('submitRound').addEventListener('click', async () => {
     updateMeters(result.newState.meters);
     updateExplainability(result.nlp, result.analysisSource);
     updateAdvisorInsights(result.insights, result.insightsSource);
-    updateRoundSummary(result, action);
+    updateRoundSummary(result);
     updateNPCs(result.npcLines);
     updatePhaseTitle(result.phaseTitle);
     updateRoundDisplay(result.newState.round);
     const reactionMessage = (result.sceneCard && (result.sceneCard.hook || result.sceneCard.narrative))
+      || result.intentSummary
       || (result.insights && result.insights.tip)
       || 'Week resolved.';
     const reactionType = determineReactionType(result.deltas);
     showReaction(reactionMessage, reactionType);
-    if (!result.ending) {
-      maybeTriggerRandomEvent(action);
-    }
     
     // Clear text area
     updateTextArea.value = '';
@@ -244,20 +215,20 @@ document.getElementById('submitRound').addEventListener('click', async () => {
   }
 });
 
-async function processRound(text, action) {
+async function processRound(text) {
   try {
-    return await requestServerRound(text, action);
+    return await requestServerRound(text);
   } catch (error) {
     console.warn('Falling back to offline simulation.', error);
-    return simulateOfflineRound(text, action, gameState);
+    return simulateOfflineRound(text, gameState);
   }
 }
 
-async function requestServerRound(text, action) {
+async function requestServerRound(text) {
   const response = await fetch('/api/process-round', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, action, gameState })
+    body: JSON.stringify({ text, gameState, apiKey: userApiKey || undefined })
   });
   
   if (!response.ok) {
@@ -341,6 +312,8 @@ function updateExplainability(nlp, source) {
   if (sourceLabel) {
     const labelMap = {
       gemini: 'Gemini API',
+      google: 'Gemini API',
+      openai: 'ChatGPT API',
       heuristic: 'Fallback heuristic',
       offline: 'Offline simulator',
       local: 'Offline simulator'
@@ -356,6 +329,8 @@ function updateAdvisorInsights(insights, source) {
   const sourceEl = document.getElementById('insightsSource');
   const labelMap = {
     gemini: 'Gemini API',
+    google: 'Gemini API',
+    openai: 'ChatGPT API',
     heuristic: 'Fallback heuristic',
     offline: 'Offline simulator',
     local: 'Offline simulator'
@@ -453,10 +428,10 @@ function determineReactionType(deltas = {}) {
   return positive ? 'success' : 'fail';
 }
 
-function displayStory(action, sceneCard, milestoneEvents) {
+function displayStory(sceneCard, intentSummary, milestoneEvents) {
   const storyEl = document.getElementById('story');
   if (!storyEl) return;
-  const base = (sceneCard && sceneCard.narrative) || ACTION_NARRATIVES[action] || '';
+  const base = (sceneCard && (sceneCard.narrative || sceneCard.description)) || intentSummary || '';
   const milestoneLine = milestoneEvents && milestoneEvents.length ? ` ${milestoneEvents[0].summary || ''}` : '';
   const text = (base + milestoneLine).trim();
   storyEl.textContent = text;
@@ -467,48 +442,12 @@ function displayStory(action, sceneCard, milestoneEvents) {
   }
 }
 
-function showEventCard(event) {
-  const card = document.createElement('div');
-  card.className = 'event-card';
-  card.innerHTML = `<h4>${event.title}</h4><p>${event.text}</p>`;
-  document.body.appendChild(card);
-  setTimeout(() => {
-    card.remove();
-  }, 4000);
-}
-
-function applyEffects(effects = {}) {
-  const applied = {};
-  Object.entries(effects).forEach(([key, delta]) => {
-    if (!STAT_CONFIG[key]) return;
-    const target = (gameState.meters[key] ?? 0) + delta;
-    applied[key] = updateStat(key, target);
-  });
-  return applied;
-}
-
-function maybeTriggerRandomEvent(action) {
-  if (gameState.round >= 26) return null;
-  if (Math.random() > 0.35) return null;
-  const event = RANDOM_EVENTS[Math.floor(Math.random() * RANDOM_EVENTS.length)];
-  showEventCard(event);
-  const deltasApplied = applyEffects(event.effects);
-  const score = (deltasApplied.growth || 0) + (deltasApplied.funding || 0) + (deltasApplied.pr || 0) + (deltasApplied.ethics || 0) - (deltasApplied.burnout || 0);
-  const reactionType = score >= 5 ? 'success' : score <= -5 ? 'fail' : 'warning';
-  showReaction(event.title, reactionType);
-  if (gameState.history.length) {
-    const last = gameState.history[gameState.history.length - 1];
-    last.randomEvent = event.title;
-    last.meters = { ...gameState.meters };
-  }
-  return event;
-}
 function resetRoundSummary() {
   const headlineEl = document.getElementById('summaryHeadline');
   const ctaEl = document.getElementById('summaryCTA');
   const highlightEl = document.getElementById('summaryHighlight');
   if (headlineEl) headlineEl.textContent = 'Submit your first update to see how the world reacts.';
-  if (ctaEl) ctaEl.textContent = 'Balance growth, ethics, burnout, funding, and PR.';
+  if (ctaEl) ctaEl.textContent = 'Keep burnout low without tanking funding or ethics.';
   if (highlightEl) {
     highlightEl.textContent = '';
     highlightEl.style.display = 'none';
@@ -520,12 +459,12 @@ function resetRoundSummary() {
   }
 }
 
-function updateRoundSummary(result, action) {
+function updateRoundSummary(result) {
   const headlineEl = document.getElementById('summaryHeadline');
   const ctaEl = document.getElementById('summaryCTA');
   const highlightEl = document.getElementById('summaryHighlight');
   if (!headlineEl || !ctaEl || !highlightEl) return;
-  const scene = result.sceneCard || {};
+  const scene = result.sceneCard || result.nlp?.scenario || {};
   const milestoneEvent = Array.isArray(result.milestoneEvents) && result.milestoneEvents.length
     ? result.milestoneEvents[0]
     : null;
@@ -545,10 +484,8 @@ function updateRoundSummary(result, action) {
       }
     });
     const labelMap = {
-      growth: 'Growth',
       ethics: 'Ethics',
       burnout: 'Burnout',
-      pr: 'PR',
       funding: 'Funding'
     };
     if (strongest && strongest.magnitude >= 4) {
@@ -564,7 +501,7 @@ function updateRoundSummary(result, action) {
     highlightEl.textContent = '';
     highlightEl.style.display = 'none';
   }
-  displayStory(action, scene, result.milestoneEvents || (milestoneEvent ? [milestoneEvent] : []));
+  displayStory(scene, result.intentSummary, result.milestoneEvents || (milestoneEvent ? [milestoneEvent] : []));
 }
 
 function updateNPCs(npcLines) {
@@ -597,10 +534,8 @@ function showEnding(ending, finalMeters, postMortem) {
   
   const finalStats = document.getElementById('finalStats');
   finalStats.innerHTML = `
-    <div><strong>${Math.round(finalMeters.growth)}</strong><span>Growth</span></div>
     <div><strong>${Math.round(finalMeters.ethics)}</strong><span>Ethics</span></div>
     <div><strong>${Math.round(finalMeters.burnout)}</strong><span>Burnout</span></div>
-    <div><strong>${Math.round(finalMeters.pr)}</strong><span>PR</span></div>
     <div><strong>${Math.round(finalMeters.funding)}</strong><span>Funding</span></div>
   `;
   
@@ -612,7 +547,7 @@ document.getElementById('restart').addEventListener('click', () => {
     round: 1,
     company: { name: "", industry: "Software", tech: "Software" },
     traits: [],
-    meters: { growth: 35, ethics: 60, burnout: 25, pr: 10, funding: 50 },
+    meters: { ethics: 60, burnout: 25, funding: 50 },
     history: [],
     narrative: createDefaultNarrative()
   };
@@ -657,16 +592,17 @@ function cloneState(state) {
   };
 }
 
-function simulateOfflineRound(text, action, currentState) {
+function simulateOfflineRound(text, currentState) {
   const stateSnapshot = cloneState(currentState);
   const nlp = analyzeUpdateLocally(text);
   nlp.source = 'offline';
-  const deltas = computeDeltasLocally(nlp, action, stateSnapshot);
+  nlp.intent = inferIntentFromText(text);
+  const deltas = computeDeltasLocally(nlp, text, stateSnapshot);
   const newMeters = applyDeltasLocally(deltas, stateSnapshot);
   const newRound = stateSnapshot.round + 1;
   const ending = checkEndingLocally(newMeters, newRound);
-  const { narrative, changes } = updateNarrativeStateLocal(stateSnapshot.narrative, deltas, newMeters, action, text, nlp);
-  const milestoneEvents = generateMilestoneEventsLocal(narrative, changes, deltas, action, nlp, text);
+  const { narrative, changes } = updateNarrativeStateLocal(stateSnapshot.narrative, deltas, newMeters, text, nlp);
+  const milestoneEvents = generateMilestoneEventsLocal(narrative, changes);
   milestoneEvents.forEach(evt => {
     const target = narrative.milestones.find(ms => ms.id === evt.id);
     if (target) {
@@ -674,10 +610,10 @@ function simulateOfflineRound(text, action, currentState) {
       target.progressLabel = evt.progressLabel || target.progressLabel;
     }
   });
-  const sceneCard = generateSceneCardLocal(text, action, nlp, deltas, narrative, milestoneEvents);
+  const sceneCard = generateSceneCardLocal(text, nlp, deltas, narrative, milestoneEvents);
   narrative.sceneLog = (narrative.sceneLog || []).concat(sceneCard).slice(-12);
   const narrativeState = { ...stateSnapshot, meters: newMeters, round: newRound, narrative };
-  const insights = generateInsightsLocal(narrativeState, action, deltas, nlp, text);
+  const insights = generateInsightsLocal(narrativeState, deltas, nlp, text);
   const npcLines = generateNPCDialogueLocal(newMeters, deltas, narrative);
   const postMortem = ending ? generatePostMortemLocal(stateSnapshot.history || [], newMeters, ending) : null;
   
@@ -698,14 +634,15 @@ function simulateOfflineRound(text, action, currentState) {
     npcLines,
     ending,
     postMortem,
-    phaseTitle: getPhaseTitleLocal(newRound)
+    phaseTitle: getPhaseTitleLocal(newRound),
+    intentSummary: createIntentSummary(nlp.intent, text)
   };
 }
 
 function analyzeUpdateLocally(text) {
   const normalizedLength = Math.min(text.length / 280, 1);
   const sentiment = Math.round(35 + normalizedLength * 40);
-  const buzzwordCount = (text.match(/\b(AI|synergy|pivot|scale|hyper|growth|runway|NFT|blockchain|virality)\b/ig) || []).length;
+  const buzzwordCount = (text.match(/\b(AI|synergy|pivot|scale|hyper|runway|NFT|blockchain|virality)\b/ig) || []).length;
   const buzzword = Math.min(20 + buzzwordCount * 15, 90);
   const hasNumbers = /\b\d+%?|\b\d+\b/.test(text);
   const feasibilityBase = hasNumbers ? 72 : 58;
@@ -713,50 +650,72 @@ function analyzeUpdateLocally(text) {
   return { sentiment, buzzword: Math.round(buzzword), feasibility: Math.round(feasibility) };
 }
 
-function computeDeltasLocally(nlp, action, gameState) {
-  const { sentiment, buzzword, feasibility } = nlp;
+function inferIntentFromText(text = '') {
+  const lower = text.toLowerCase();
+  if (/(fundraise|investor|vc|angel|pitch|term sheet|runway)/.test(lower)) return 'funding';
+  if (/(burnout|rest|mental|therapy|sleep|offsite|retreat|hiring|hire)/.test(lower)) return 'rest';
+  if (/(ethic|governance|compliance|privacy|regulator|safety|trust)/.test(lower)) return 'ethics';
+  if (/(outage|crash|fire|leak|lawsuit|crisis)/.test(lower)) return 'crisis';
+  if (/(ship|launch|feature|deployment|build|sprint)/.test(lower)) return 'build';
+  return 'default';
+}
+
+function createIntentSummary(intent, text) {
+  if (!intent) return text.slice(0, 140) || INTENT_FALLBACKS.default;
+  const base = INTENT_FALLBACKS[intent] || INTENT_FALLBACKS.default;
+  return base;
+}
+
+function computeDeltasLocally(nlp, text, gameState) {
+  const { sentiment, buzzword, feasibility, intent } = nlp;
   const { traits, company } = gameState;
-  
-  const actionEffects = {
-    'Build': { growth: 5, ethics: 2, burnout: 8, pr: -2, funding: -3 },
-    'PR': { growth: 2, ethics: -1, burnout: 3, pr: 12, funding: 3 },
-    'Growth Hack': { growth: 15, ethics: -8, burnout: 10, pr: -5, funding: 5 },
-    'Fundraise': { growth: -2, ethics: 0, burnout: 5, pr: 8, funding: 12 },
-    'Refactor': { growth: -5, ethics: 5, burnout: -8, pr: -3, funding: -5 },
-    'Hire': { growth: 3, ethics: 3, burnout: -12, pr: 2, funding: -15 }
-  };
-  
-  const baseEffects = actionEffects[action] ?? actionEffects['Build'];
-  const deltas = { ...baseEffects };
-  
-  deltas.growth += (sentiment - 50) * 0.15;
-  deltas.pr += (sentiment - 50) * 0.2;
-  deltas.ethics -= (buzzword - 50) * 0.1;
-  deltas.funding += (feasibility - 20) * 0.08;
-  deltas.burnout += (100 - feasibility) * 0.05;
-  
+  const deltas = { burnout: 0, ethics: 0, funding: 0 };
+  switch (intent) {
+    case 'funding':
+      deltas.funding += 10;
+      deltas.burnout += 5;
+      deltas.ethics -= 2;
+      break;
+    case 'rest':
+      deltas.burnout -= 10;
+      deltas.ethics += 3;
+      deltas.funding -= 4;
+      break;
+    case 'ethics':
+      deltas.ethics += 8;
+      deltas.funding -= 3;
+      break;
+    case 'crisis':
+      deltas.burnout += 12;
+      deltas.ethics -= 6;
+      break;
+    case 'build':
+      deltas.burnout += 6;
+      deltas.funding += 2;
+      break;
+    default:
+      break;
+  }
+  deltas.ethics -= (buzzword - 50) * 0.06;
+  deltas.funding += (feasibility - 50) * 0.08;
+  deltas.burnout += (65 - sentiment) * 0.05;
+  if (/\btransparen|audit|report\b/i.test(text)) deltas.ethics += 4;
+  if (/\bhire|hiring|team\b/i.test(text)) deltas.burnout -= 4;
   const industryMods = getIndustryModifiersLocal(company.industry);
   const techMods = getTechModifiersLocal(company.tech);
-  
-  if (deltas.growth > 0) deltas.growth *= industryMods.growth * techMods.growth;
   if (deltas.ethics < 0) deltas.ethics *= industryMods.ethics_risk * techMods.ethics_risk;
-  if (deltas.pr > 0) deltas.pr *= industryMods.pr * techMods.pr;
   if (deltas.funding > 0) deltas.funding *= industryMods.funding * techMods.funding;
-  
-  if (traits.includes('Ambition')) {
-    if (action === 'PR' || action === 'Fundraise') deltas.pr += 5;
-    deltas.burnout += 1;
-  }
+  deltas.burnout *= industryMods.burnout * techMods.burnout;
   if (traits.includes('Integrity') && deltas.ethics < 0) {
-    deltas.ethics *= 0.5;
+    deltas.ethics *= 0.6;
   }
   if (traits.includes('Resilience')) {
-    deltas.burnout -= 6;
+    deltas.burnout -= 4;
   }
-  if (traits.includes('Charisma') && action === 'Fundraise') {
-    deltas.funding += 5;
+  if (traits.includes('Ambition')) {
+    deltas.burnout += 2;
+    deltas.funding += 1;
   }
-  
   return deltas;
 }
 
@@ -772,18 +731,19 @@ function clampValue(num, min, max) {
   return Math.max(min, Math.min(max, num));
 }
 
-function updateNarrativeStateLocal(prevNarrative, deltas, meters, action, text, nlp) {
+function updateNarrativeStateLocal(prevNarrative, deltas, meters, text, nlp) {
   const narrative = prevNarrative ? JSON.parse(JSON.stringify(prevNarrative)) : createDefaultNarrative();
   narrative.sceneLog = narrative.sceneLog || [];
   narrative.npc = narrative.npc || { vcMood: 0, employeeMorale: 0 };
   const sentimentShift = (nlp.sentiment - 50) * 0.05;
+  const intent = nlp.intent || inferIntentFromText(text);
   narrative.npc.vcMood = clampValue(
-    (narrative.npc.vcMood || 0) + (deltas.funding || 0) * 0.25 + (deltas.pr || 0) * 0.15 + sentimentShift,
+    (narrative.npc.vcMood || 0) + (deltas.funding || 0) * 0.35 + sentimentShift,
     -10,
     10
   );
   narrative.npc.employeeMorale = clampValue(
-    (narrative.npc.employeeMorale || 0) - (deltas.burnout || 0) * 0.3 + (deltas.ethics || 0) * 0.12 + sentimentShift,
+    (narrative.npc.employeeMorale || 0) - (deltas.burnout || 0) * 0.4 + (deltas.ethics || 0) * 0.2 + sentimentShift,
     -10,
     10
   );
@@ -795,19 +755,19 @@ function updateNarrativeStateLocal(prevNarrative, deltas, meters, action, text, 
     let newStage = previousStage;
     switch (ms.id) {
       case 'product':
-        if (newStage < 1 && (meters.growth > 45 || action === 'Build')) newStage = 1;
-        if (newStage < 2 && (meters.growth > 60 && meters.pr > 20)) newStage = 2;
-        if (newStage < 3 && (meters.growth > 75 && meters.funding > 60)) newStage = 3;
+        if (newStage < 1 && (meters.funding > 45 || intent === 'build')) newStage = 1;
+        if (newStage < 2 && (meters.funding > 60 && meters.burnout < 65)) newStage = 2;
+        if (newStage < 3 && (meters.funding > 75 && meters.burnout < 50 && meters.ethics > 45)) newStage = 3;
         break;
       case 'funding':
-        if (newStage < 1 && (meters.funding > 55 || action === 'Fundraise')) newStage = 1;
-        if (newStage < 2 && (meters.funding > 70 && meters.pr > 25)) newStage = 2;
-        if (newStage < 3 && (meters.funding > 85 && meters.pr > 35)) newStage = 3;
+        if (newStage < 1 && (meters.funding > 55 || intent === 'funding')) newStage = 1;
+        if (newStage < 2 && meters.funding > 70) newStage = 2;
+        if (newStage < 3 && meters.funding > 85 && meters.ethics > 35) newStage = 3;
         break;
       case 'team':
-        if (newStage < 1 && (meters.burnout < 55 || action === 'Hire' || action === 'Refactor')) newStage = 1;
+        if (newStage < 1 && (meters.burnout < 55 || intent === 'rest')) newStage = 1;
         if (newStage < 2 && (meters.burnout < 40 && meters.ethics > 55)) newStage = 2;
-        if (newStage < 3 && (meters.burnout < 32 && meters.growth > 60)) newStage = 3;
+        if (newStage < 3 && (meters.burnout < 32 && meters.ethics > 65)) newStage = 3;
         break;
       default:
         break;
@@ -834,7 +794,7 @@ function updateNarrativeStateLocal(prevNarrative, deltas, meters, action, text, 
   return { narrative, changes };
 }
 
-function generateMilestoneEventsLocal(narrative, changes, deltas, action, nlp, text) {
+function generateMilestoneEventsLocal(narrative, changes) {
   if (!changes || !changes.length) return [];
   return changes.map(change => {
     const def = MILESTONE_DEFINITIONS[change.id];
@@ -862,24 +822,24 @@ function generateMilestoneEventsLocal(narrative, changes, deltas, action, nlp, t
   });
 }
 
-function generateSceneCardLocal(updateText, action, nlp, deltas, narrative, milestoneEvents) {
-  const actionTitles = {
-    Build: 'Feature factory frenzy',
-    PR: 'Hype machine in motion',
-    'Growth Hack': 'Growth hack roulette',
-    Fundraise: 'Pitch decks and promises',
-    Refactor: 'Tech debt cleanse',
-    Hire: 'Building the squad'
+function generateSceneCardLocal(updateText, nlp, deltas, narrative, milestoneEvents) {
+  const intent = nlp.intent || inferIntentFromText(updateText);
+  const intentTitles = {
+    funding: 'Pitch decks and promises',
+    rest: 'Emergency recovery sprint',
+    ethics: 'Governance clean-up',
+    crisis: 'Damage control scramble',
+    build: 'Feature factory frenzy'
   };
-  const title = actionTitles[action] || 'Another week in founder land';
-  const growthPulse = Math.round((deltas.growth || 0) + (deltas.pr || 0) * 0.4);
+  const title = intentTitles[intent] || 'Another week in founder land';
+  const fundingPulse = Math.round(deltas.funding || 0);
   const burnoutPulse = Math.round(deltas.burnout || 0);
   const trimmedUpdate = updateText.length > 140 ? `${updateText.slice(0, 137)}...` : updateText;
   let narrativeText = `You reported: "${trimmedUpdate}".`;
-  if (growthPulse > 6) {
-    narrativeText += ' Users are actually sticking around.';
-  } else if (growthPulse < -3) {
-    narrativeText += ' Traction slipped and dashboards look worried.';
+  if (fundingPulse > 6) {
+    narrativeText += ' Investors perked up and runway lengthened.';
+  } else if (fundingPulse < -3) {
+    narrativeText += ' Cash position tightened and nerves spiked.';
   }
   if (burnoutPulse > 6) {
     narrativeText += ' The team looks exhausted -- eyes on that burnout meter.';
@@ -887,7 +847,12 @@ function generateSceneCardLocal(updateText, action, nlp, deltas, narrative, mile
     narrativeText += ' The crew finally caught a breather.';
   }
   const milestoneHook = milestoneEvents && milestoneEvents[0]?.hook;
-  const hook = milestoneHook || (burnoutPulse > 6 ? 'Consider Hire or Refactor before people revolt.' : 'Decide whether to double down or regroup next week.');
+  const hook = milestoneHook
+    || (intent === 'rest'
+      ? 'Protect this breathing room before the next crisis.'
+      : burnoutPulse > 6
+        ? 'Find a humane move before the wheels come off.'
+        : 'Decide whether to double down or regroup next week.');
   return {
     title,
     narrative: narrativeText,
@@ -898,58 +863,67 @@ function generateSceneCardLocal(updateText, action, nlp, deltas, narrative, mile
 
 function generatePostMortemLocal(history, finalMeters, ending) {
   const rounds = history.length + 1;
-  const growthValues = history.map(h => (h.meters?.growth ?? h.growth ?? 0));
-  growthValues.push(finalMeters.growth || 0);
+  const fundingValues = history.map(h => (h.meters?.funding ?? h.funding ?? 0));
+  fundingValues.push(finalMeters.funding || 0);
   const burnoutValues = history.map(h => (h.meters?.burnout ?? h.burnout ?? 100));
   burnoutValues.push(finalMeters.burnout || 100);
-  const peakGrowth = Math.max(...growthValues);
+  const ethicsValues = history.map(h => (h.meters?.ethics ?? h.ethics ?? 0));
+  ethicsValues.push(finalMeters.ethics || 0);
+  const peakFunding = Math.max(...fundingValues);
   const minBurnout = Math.min(...burnoutValues);
+  const maxEthics = Math.max(...ethicsValues);
   return `After ${rounds} frantic weeks you landed at "${ending.title}". ` +
-    `Peak growth touched ${Math.round(peakGrowth)} while burnout bottomed out at ${Math.round(minBurnout)}. ` +
+    `Funding peaked at ${Math.round(peakFunding)}, burnout bottomed at ${Math.round(minBurnout)}, and ethics topped out near ${Math.round(maxEthics)}. ` +
     'Investors will be reading this post-mortem over overpriced cold brew tomorrow.';
 }
 
 function checkEndingLocally(meters, round) {
-  const { growth, ethics, burnout, funding, pr } = meters;
-  if (burnout > 80) {
+  const { ethics, burnout, funding } = meters;
+  if (burnout > 85) {
     return {
       title: 'Collapse',
       text: 'You burnt out. Your co-founder took over while you checked into a wellness retreat in Bali. The company pivoted to selling NFTs.'
     };
   }
-  if (funding < 0) {
+  if (funding < 5) {
     return {
       title: 'Bankruptcy',
       text: 'You ran out of runway. Your last Slack message was "brb" three months ago. The domain expired.'
     };
   }
+  if (ethics < 15) {
+    return {
+      title: 'Scandal',
+      text: 'Regulators and Reddit teamed up. Your apology thread has 4k comments and zero mercy.'
+    };
+  }
   if (round < 26) return null;
   
-  if (growth > 80 && ethics > 50 && burnout < 30) {
+  if (funding > 80 && ethics > 55 && burnout < 40) {
     return {
-      title: 'IPO Success',
-      text: 'You did it. CNBC called. Your Series C valued you at $2B. Your biggest problem now is choosing between Goldman and Morgan Stanley.'
+      title: 'Steady Runway',
+      text: 'You dialed in a humane, well-funded machine. LPs brag about backing you early.'
     };
   }
   
-  if (funding > 80 && ethics < 40) {
+  if (funding > 85 && ethics < 35) {
     return {
-      title: 'Acquisition',
-      text: 'Google bought you for $400M. You signed a 2-year retention agreement. Your LinkedIn now says "Entrepreneur, Investor, Advisor."'
+      title: 'Shady Exit',
+      text: 'A mega-corp acquired you before the lawsuits landed. Your yacht is named "Materially False."'
     };
   }
   
-  if (ethics > 80 && burnout < 40 && growth < 70) {
+  if (ethics > 80 && burnout < 35 && funding > 45) {
     return {
-      title: 'Pivot to Wellness',
-      text: 'You realized happiness > growth. Now you run a 4-person agency that closes at 4pm Fridays. Your therapist is proud of you.'
+      title: 'Conscious Company',
+      text: 'You built a business people respect and actually want to work at. Wild concept.'
     };
   }
   
-  if (pr < 10 && ethics < 30) {
+  if (burnout > 65 && funding > 70) {
     return {
-      title: 'Infamy',
-      text: 'TechCrunch wrote a scathing exposé. Your Wikipedia page exists but only to document the controversies. You moved to Wyoming.'
+      title: 'Zombie Unicorn',
+      text: 'Money kept arriving but everyone is dead behind the eyes. Enjoy the golden handcuffs.'
     };
   }
   
@@ -961,19 +935,19 @@ function checkEndingLocally(meters, round) {
 
 function getIndustryModifiersLocal(industry) {
   const mods = {
-    'Healthcare': { growth: 0.9, ethics_risk: 0.6, pr: 0.9, funding: 1.0 },
-    'Software': { growth: 1.0, ethics_risk: 1.0, pr: 1.0, funding: 1.0 },
-    'Finance': { growth: 1.0, ethics_risk: 1.2, pr: 1.0, funding: 1.1 },
-    'Electronics': { growth: 1.1, ethics_risk: 1.0, pr: 1.0, funding: 1.0 }
+    'Healthcare': { ethics_risk: 0.7, funding: 0.9, burnout: 0.9 },
+    'Software': { ethics_risk: 1.0, funding: 1.0, burnout: 1.0 },
+    'Finance': { ethics_risk: 1.2, funding: 1.15, burnout: 1.05 },
+    'Electronics': { ethics_risk: 1.0, funding: 1.0, burnout: 1.1 }
   };
   return mods[industry] || mods['Software'];
 }
 
 function getTechModifiersLocal(tech) {
   const mods = {
-    'Software': { growth: 1.0, ethics_risk: 1.0, pr: 1.0, funding: 1.0 },
-    'AI/Automation': { growth: 1.0, ethics_risk: 1.2, pr: 1.15, funding: 1.0 },
-    'Physical Product': { growth: 0.9, ethics_risk: 1.0, pr: 1.1, funding: 0.95 }
+    'Software': { ethics_risk: 1.0, funding: 1.0, burnout: 1.0 },
+    'AI/Automation': { ethics_risk: 1.25, funding: 1.05, burnout: 1.1 },
+    'Physical Product': { ethics_risk: 0.95, funding: 0.9, burnout: 1.05 }
   };
   return mods[tech] || mods['Software'];
 }
@@ -981,11 +955,11 @@ function getTechModifiersLocal(tech) {
 function generateNPCDialogueLocal(meters, deltas, narrative) {
   const vcMood = narrative?.npc?.vcMood ?? 0;
   const employeeMorale = narrative?.npc?.employeeMorale ?? 0;
-  const bigWin = deltas.growth >= 10 || deltas.funding >= 10 || deltas.pr >= 10;
+  const bigWin = deltas.funding >= 8 || deltas.ethics >= 6;
   const bigLoss = deltas.ethics <= -8 || deltas.funding <= -10 || deltas.burnout >= 12;
   let vcLine;
   if (vcMood > 4) {
-    vcLine = bigWin ? 'This is the story LPs want -- keep sending charts.' : 'We can sell this, but I need sharper traction next week.';
+    vcLine = bigWin ? 'This is the story LPs want -- keep sending charts.' : 'We can sell this, but give me cleaner numbers next week.';
   } else if (vcMood < -4) {
     vcLine = bigLoss ? 'Runway math is ugly. Spin or spend less.' : 'Still not buying the narrative. Tighten it up fast.';
   } else {
@@ -1004,17 +978,18 @@ function generateNPCDialogueLocal(meters, deltas, narrative) {
   return { vc: vcLine, employee: employeeLine };
 }
 
-function generateInsightsLocal(state, action, deltas, nlp, text) {
+function generateInsightsLocal(state, deltas, nlp, text) {
   const { meters } = state;
   const stressHigh = meters.burnout > 65 || deltas.burnout > 6;
   const fundingHigh = meters.funding > 70 || deltas.funding > 8;
   const ethicsLow = meters.ethics < 35 || deltas.ethics < -5;
+  const intent = nlp.intent || inferIntentFromText(text);
   let tip;
   if (stressHigh) {
     tip = 'Stabilize the team before the next big push.';
-  } else if (ethicsLow && action === 'Growth Hack') {
+  } else if (ethicsLow && intent === 'funding') {
     tip = 'Patch the trust leaks before regulators sniff around.';
-  } else if (fundingHigh && action === 'Fundraise') {
+  } else if (fundingHigh && intent === 'funding') {
     tip = 'Ride the momentum -- lock terms while goodwill lasts.';
   } else {
     tip = 'Pair the next sprint with one measurable win.';

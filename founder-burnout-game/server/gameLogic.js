@@ -10,143 +10,177 @@ const PHASE_TITLES = [
   "Week 25: Demo Day Eve", "Week 26: Judgment Day"
 ];
 
+const DEFAULT_METERS = ['burnout', 'funding', 'ethics'];
+
 export function getPhaseTitle(round) {
   return PHASE_TITLES[Math.min(round - 1, PHASE_TITLES.length - 1)];
 }
 
-export function computeDeltas(nlp, action, gameState) {
-  const { sentiment, buzzword, feasibility } = nlp;
-  const { meters, traits, company } = gameState;
-  
-  let deltas = { growth: 0, ethics: 0, burnout: 0, pr: 0, funding: 0 };
-  
-  // Base action effects
-  const actionEffects = {
-    'Build': { growth: 5, ethics: 2, burnout: 8, pr: -2, funding: -3 },
-    'PR': { growth: 2, ethics: -1, burnout: 3, pr: 12, funding: 3 },
-    'Growth Hack': { growth: 15, ethics: -8, burnout: 10, pr: -5, funding: 5 },
-    'Fundraise': { growth: -2, ethics: 0, burnout: 5, pr: 8, funding: 12 },
-    'Refactor': { growth: -5, ethics: 5, burnout: -8, pr: -3, funding: -5 },
-    'Hire': { growth: 3, ethics: 3, burnout: -12, pr: 2, funding: -15 }
-  };
-  
-  const baseEffects = actionEffects[action] ?? actionEffects['Build'];
-  deltas = { ...baseEffects };
-  
-  // NLP modifiers (sentiment, buzzword, feasibility influence outcomes)
-  deltas.growth += (sentiment - 50) * 0.15;
-  deltas.pr += (sentiment - 50) * 0.2;
-  deltas.ethics -= (buzzword - 50) * 0.1;  // High buzzword = less ethics
-  deltas.funding += (feasibility - 20) * 0.08;
-  deltas.burnout += (100 - feasibility) * 0.05;  // Low feasibility = stress
-  
-  // Industry modifiers
+function clampValue(value, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function inferIntent(updateText = '', nlp = {}) {
+  if (nlp.intent) return nlp.intent;
+  const lower = updateText.toLowerCase();
+  if (/(fundraise|investor|vc|angel|pitch|term sheet|runway)/.test(lower)) return 'funding';
+  if (/(burnout|rest|mental|therapy|sleep|offsite|retreat|hiring|hire)/.test(lower)) return 'rest';
+  if (/(ethic|governance|compliance|privacy|regulator|safety|trust)/.test(lower)) return 'ethics';
+  if (/(outage|crash|fire|leak|lawsuit|crisis)/.test(lower)) return 'crisis';
+  if (/(ship|launch|feature|deployment|build|sprint)/.test(lower)) return 'build';
+  return 'default';
+}
+
+export function computeDeltas(nlp, updateText, gameState) {
+  const { traits, company } = gameState;
+  const { sentiment = 50, buzzword = 50, feasibility = 55 } = nlp;
+  const intent = inferIntent(updateText, nlp);
+  const deltas = { burnout: 0, funding: 0, ethics: 0 };
+
+  if (nlp?.meterDeltas) {
+    DEFAULT_METERS.forEach(key => {
+      if (typeof nlp.meterDeltas[key] === 'number') {
+        deltas[key] += nlp.meterDeltas[key];
+      }
+    });
+  } else {
+    switch (intent) {
+      case 'funding':
+        deltas.funding += 11;
+        deltas.burnout += 6;
+        deltas.ethics -= 3;
+        break;
+      case 'rest':
+        deltas.burnout -= 12;
+        deltas.ethics += 4;
+        deltas.funding -= 4;
+        break;
+      case 'ethics':
+        deltas.ethics += 9;
+        deltas.funding -= 2;
+        break;
+      case 'crisis':
+        deltas.burnout += 14;
+        deltas.ethics -= 6;
+        break;
+      case 'build':
+        deltas.burnout += 7;
+        deltas.funding += 3;
+        break;
+      default:
+        break;
+    }
+  }
+
+  deltas.ethics -= (buzzword - 50) * 0.05;
+  deltas.funding += (feasibility - 50) * 0.09;
+  deltas.burnout += (65 - sentiment) * 0.05;
+  if (/\btransparen|audit|report\b/i.test(updateText)) deltas.ethics += 5;
+  if (/\bhire|hiring|team\b/i.test(updateText)) deltas.burnout -= 5;
+
   const industryMods = getIndustryModifiers(company.industry);
   const techMods = getTechModifiers(company.tech);
-  
-  // Apply multipliers to deltas (not raw meters)
-  if (deltas.growth > 0) deltas.growth *= industryMods.growth * techMods.growth;
   if (deltas.ethics < 0) deltas.ethics *= industryMods.ethics_risk * techMods.ethics_risk;
-  if (deltas.pr > 0) deltas.pr *= industryMods.pr * techMods.pr;
   if (deltas.funding > 0) deltas.funding *= industryMods.funding * techMods.funding;
-  
-  // Trait effects
-  if (traits.includes('Ambition')) {
-    if (action === 'PR' || action === 'Fundraise') deltas.pr += 5;
-    deltas.burnout += 1;
-  }
-  if (traits.includes('Integrity')) {
-    if (deltas.ethics < 0) deltas.ethics *= 0.5;
-    if (action === 'Growth Hack') deltas.pr -= 2;
+  deltas.burnout *= industryMods.burnout * techMods.burnout;
+
+  if (traits.includes('Integrity') && deltas.ethics < 0) {
+    deltas.ethics *= 0.6;
   }
   if (traits.includes('Resilience')) {
-    deltas.burnout -= 6;
+    deltas.burnout -= 4;
   }
-  if (traits.includes('Charisma') && action === 'Fundraise') {
-    deltas.funding += 5;
+  if (traits.includes('Ambition')) {
+    deltas.burnout += 2;
+    deltas.funding += 1;
   }
-  if (traits.includes('Critical Thinking')) {
-    deltas.feasibility = Math.min(100, feasibility * 1.1);
+  if (traits.includes('Charisma') && intent === 'funding') {
+    deltas.funding += 4;
   }
-  
+
+  DEFAULT_METERS.forEach(key => {
+    deltas[key] = Number(deltas[key] || 0);
+  });
   return deltas;
 }
 
 export function applyDeltas(deltas, gameState) {
   const newMeters = { ...gameState.meters };
-  
-  for (let key in deltas) {
-    newMeters[key] = Math.max(0, Math.min(100, newMeters[key] + deltas[key]));
-  }
-  
+  DEFAULT_METERS.forEach(key => {
+    const current = typeof newMeters[key] === 'number' ? newMeters[key] : 50;
+    const delta = typeof deltas[key] === 'number' ? deltas[key] : 0;
+    newMeters[key] = clampValue(current + delta);
+  });
   return newMeters;
 }
 
 export function checkEnding(meters, round) {
-  const { growth, ethics, burnout, funding, pr } = meters;
-  
-  // Instant fail conditions
-  if (burnout > 80) return { 
-    title: 'Collapse', 
-    text: 'You burnt out. Your co-founder took over while you checked into a wellness retreat in Bali. The company pivoted to selling NFTs.' 
-  };
-  if (funding < 0) return { 
-    title: 'Bankruptcy', 
-    text: 'You ran out of runway. Your last Slack message was "brb" three months ago. The domain expired.' 
-  };
-  
-  // Game complete - check final endings
+  const { ethics, burnout, funding } = meters;
+  if (burnout > 85) {
+    return {
+      title: 'Collapse',
+      text: 'You burnt out. Your co-founder took over while you checked into a wellness retreat in Bali. The company pivoted to selling NFTs.'
+    };
+  }
+  if (funding < 5) {
+    return {
+      title: 'Bankruptcy',
+      text: 'You ran out of runway. Your last Slack message was "brb" three months ago. The domain expired.'
+    };
+  }
+  if (ethics < 15) {
+    return {
+      title: 'Scandal',
+      text: 'Regulators and Reddit teamed up. Your apology thread has 4k comments and zero mercy.'
+    };
+  }
   if (round < 26) return null;
-  
-  if (growth > 80 && ethics > 50 && burnout < 30) {
-    return { 
-      title: 'IPO Success', 
-      text: 'You did it. CNBC called. Your Series C valued you at $2B. Your biggest problem now is choosing between Goldman and Morgan Stanley.' 
+
+  if (funding > 80 && ethics > 55 && burnout < 40) {
+    return {
+      title: 'Steady Runway',
+      text: 'You dialed in a humane, well-funded machine. LPs brag about backing you early.'
     };
   }
-  
-  if (funding > 80 && ethics < 40) {
-    return { 
-      title: 'Acquisition', 
-      text: 'Google bought you for $400M. You signed a 2-year retention agreement. Your LinkedIn now says "Entrepreneur, Investor, Advisor."' 
+  if (funding > 85 && ethics < 35) {
+    return {
+      title: 'Shady Exit',
+      text: 'A mega-corp acquired you before the lawsuits landed. Your yacht is named "Materially False."'
     };
   }
-  
-  if (ethics > 80 && burnout < 40 && growth < 70) {
-    return { 
-      title: 'Pivot to Wellness', 
-      text: 'You realized happiness > growth. Now you run a 4-person agency that closes at 4pm Fridays. Your therapist is proud of you.' 
+  if (ethics > 80 && burnout < 35 && funding > 45) {
+    return {
+      title: 'Conscious Company',
+      text: 'You built a business people respect and actually want to work at. Wild concept.'
     };
   }
-  
-  if (pr < 10 && ethics < 30) {
-    return { 
-      title: 'Infamy', 
-      text: 'TechCrunch wrote a scathing exposé. Your Wikipedia page exists but only to document the controversies. You moved to Wyoming.' 
+  if (burnout > 65 && funding > 70) {
+    return {
+      title: 'Zombie Unicorn',
+      text: 'Money kept arriving but everyone is dead behind the eyes. Enjoy the golden handcuffs.'
     };
   }
-  
-  return { 
-    title: 'Stable Mediocrity', 
-    text: 'You built a sustainable business. 20 employees, $3M ARR, no headlines. Your parents still ask when you\'ll get a "real job."' 
+  return {
+    title: 'Stable Mediocrity',
+    text: 'You built a sustainable business. 20 employees, $3M ARR, no headlines. Your parents still ask when you\'ll get a "real job."'
   };
 }
 
 function getIndustryModifiers(industry) {
   const mods = {
-    'Healthcare': { growth: 0.9, ethics_risk: 0.6, pr: 0.9, funding: 1.0 },
-    'Software': { growth: 1.0, ethics_risk: 1.0, pr: 1.0, funding: 1.0 },
-    'Finance': { growth: 1.0, ethics_risk: 1.2, pr: 1.0, funding: 1.1 },
-    'Electronics': { growth: 1.1, ethics_risk: 1.0, pr: 1.0, funding: 1.0 }
+    'Healthcare': { ethics_risk: 0.7, funding: 0.9, burnout: 0.9 },
+    'Software': { ethics_risk: 1.0, funding: 1.0, burnout: 1.0 },
+    'Finance': { ethics_risk: 1.2, funding: 1.15, burnout: 1.05 },
+    'Electronics': { ethics_risk: 1.0, funding: 1.0, burnout: 1.1 }
   };
   return mods[industry] || mods['Software'];
 }
 
 function getTechModifiers(tech) {
   const mods = {
-    'Software': { growth: 1.0, ethics_risk: 1.0, pr: 1.0, funding: 1.0 },
-    'AI/Automation': { growth: 1.0, ethics_risk: 1.2, pr: 1.15, funding: 1.0 },
-    'Physical Product': { growth: 0.9, ethics_risk: 1.0, pr: 1.1, funding: 0.95 }
+    'Software': { ethics_risk: 1.0, funding: 1.0, burnout: 1.0 },
+    'AI/Automation': { ethics_risk: 1.25, funding: 1.05, burnout: 1.1 },
+    'Physical Product': { ethics_risk: 0.95, funding: 0.9, burnout: 1.05 }
   };
   return mods[tech] || mods['Software'];
 }

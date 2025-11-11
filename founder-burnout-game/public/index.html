@@ -54,6 +54,12 @@
             </div>
           </div>
           
+          <div class="form-group">
+            <label>Gemini API Key (optional, stays on this browser)</label>
+            <input type="password" id="aiKey" placeholder="AIza...">
+            <small class="form-hint">Leave blank to use the fallback heuristic or a server-side key.</small>
+          </div>
+          
           <button id="startGame" class="btn-primary">Begin the Grind</button>
         </div>
 
@@ -62,9 +68,9 @@
             <h2>📘 How to Play</h2>
             <ol>
               <li>Complete the setup to define your doomed-but-hopeful startup.</li>
-              <li>Each week, write a short update and choose a focus action.</li>
-              <li>The AI (or local fallback) scores sentiment, buzzwords, and feasibility, then updates meters.</li>
-              <li>Keep Growth, Funding, Ethics, PR, and Burnout in balance for 26 rounds.</li>
+              <li>Each week, write a short update describing exactly what happened.</li>
+              <li>Gemini (or the local fallback) scores sentiment, buzzwords, and feasibility, then updates meters.</li>
+              <li>Keep Funding, Ethics, and Burnout in balance for 26 rounds.</li>
               <li>NPC feedback, advisor tips, and headlines react to your progress.</li>
               <li>Avoid burnout &gt; 80 or funding &lt; 0, and chase the ending you're after.</li>
             </ol>
@@ -90,44 +96,11 @@
             id="updateText" 
             placeholder="What's your weekly update? (1-3 sentences)
             
-Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted but motivated.'"
+Example: 'Closed a bridge round after promising better governance. Team is exhausted but we booked a recharge day.'"
             maxlength="300"
           ></textarea>
           
           <div class="char-count"><span id="charCount">0</span>/300</div>
-          
-          <div id="actions">
-            <label class="trait action-btn">
-              <input type="radio" name="action" value="Build" checked>
-              <span>🔨 Build</span>
-              <small>+Growth, +Burnout</small>
-            </label>
-            <label class="trait action-btn">
-              <input type="radio" name="action" value="PR">
-              <span>📢 PR</span>
-              <small>+PR, +Funding</small>
-            </label>
-            <label class="trait action-btn">
-              <input type="radio" name="action" value="Growth Hack">
-              <span>📈 Growth Hack</span>
-              <small>++Growth, --Ethics</small>
-            </label>
-            <label class="trait action-btn">
-              <input type="radio" name="action" value="Fundraise">
-              <span>💰 Fundraise</span>
-              <small>++Funding, +Burnout</small>
-            </label>
-            <label class="trait action-btn">
-              <input type="radio" name="action" value="Refactor">
-              <span>🔧 Refactor</span>
-              <small>+Ethics, -Burnout</small>
-            </label>
-            <label class="trait action-btn">
-              <input type="radio" name="action" value="Hire">
-              <span>👥 Hire</span>
-              <small>-Burnout, --Funding</small>
-            </label>
-          </div>
           
           <button id="submitRound" class="btn-primary">Submit Update</button>
           <div id="loadingMessage" class="loading">Analyzing update...</div>
@@ -136,21 +109,13 @@ Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted bu
         <div class="right-panel">
           <div id="roundSummary" class="panel summary-panel">
             <div class="summary-headline" id="summaryHeadline">Submit your first update to see how the world reacts.</div>
-            <div class="summary-cta" id="summaryCTA">Balance growth, ethics, burnout, funding, and PR.</div>
+            <div class="summary-cta" id="summaryCTA">Balance funding, ethics, and burnout before you flame out.</div>
             <div class="summary-highlight" id="summaryHighlight"></div>
             <div id="story" class="summary-story"></div>
           </div>
 
           <div id="analysisDetails" class="details-container">
             <div id="meters" class="stats-grid">
-              <div class="stat" id="stat-growth">
-                <div class="stat-header">
-                  <span class="label">📈 Growth</span>
-                  <span class="value" id="growth-val">35</span>
-                </div>
-                <div class="bar"><div class="fill growth" id="growth-fill" style="width: 35%"></div></div>
-              </div>
-              
               <div class="stat" id="stat-ethics">
                 <div class="stat-header">
                   <span class="label">⚖️ Ethics</span>
@@ -165,14 +130,6 @@ Example: 'Shipped v2 with AI features. Saw 15% user growth. Team is exhausted bu
                   <span class="value" id="burnout-val">25</span>
                 </div>
                 <div class="bar"><div class="fill burnout" id="burnout-fill" style="width: 25%"></div></div>
-              </div>
-              
-              <div class="stat" id="stat-pr">
-                <div class="stat-header">
-                  <span class="label">📰 PR</span>
-                  <span class="value" id="pr-val">10</span>
-                </div>
-                <div class="bar"><div class="fill pr" id="pr-fill" style="width: 10%"></div></div>
               </div>
               
               <div class="stat" id="stat-funding">
