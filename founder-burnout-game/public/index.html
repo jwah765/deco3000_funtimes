@@ -4,29 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Founder Burnout Simulator</title>
-  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="styles.css">
-  <script>
-    (function enforceBackendOrigin() {
-      const desiredPort = '3000';
-      const allowedHosts = new Set(['localhost', '127.0.0.1']);
-      const { hostname, port, pathname, search, hash } = window.location;
-      if (!allowedHosts.has(hostname) || port === desiredPort) return;
-
-      const targetHost = hostname || '127.0.0.1';
-      let normalizedPath = pathname;
-      const publicIndexMatch = pathname.match(/(.*)\/public\/index\.html$/);
-      if (publicIndexMatch) {
-        normalizedPath = '/';
-      } else if (pathname.includes('/public/')) {
-        const [, afterPublic = ''] = pathname.split('/public/');
-        normalizedPath = `/${afterPublic}`;
-      }
-
-      const newUrl = `http://${targetHost}:${desiredPort}${normalizedPath}${search}${hash}`;
-      window.location.replace(newUrl);
-    })();
-  </script>
 </head>
 <body>
   <div id="app">

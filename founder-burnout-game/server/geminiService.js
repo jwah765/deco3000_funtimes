@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const FALLBACK_GOOGLE_KEY = 'AIzaSyDDnVNccMsAfvgNPxmL2ZIA1LnRZpdKV_A';
+const FALLBACK_GOOGLE_KEY = 'AIzaSyDcPVlmd6Ycskk9ju4fPiBrXT9Cm4M3ee4';
 
 let geminiClient = null;
 let initAttempt = null;
@@ -54,7 +54,7 @@ async function ensureModels() {
         return;
       }
       try {
-        geminiClient = new GoogleGenAI({ apiKey });
+        geminiClient = new GoogleGenerativeAI(apiKey);
       } catch (error) {
         console.warn(`Gemini SDK unavailable (${error.message}); using heuristic fallbacks.`);
       }
@@ -64,13 +64,13 @@ async function ensureModels() {
 }
 
 function getGoogleModel() {
-  return process.env.GOOGLE_MODEL || 'gemini-2.5-flash';
+  return process.env.GOOGLE_MODEL || 'gemini-1.5-flash';
 }
 
 async function getClient(apiKey) {
   if (apiKey) {
     try {
-      return new GoogleGenAI({ apiKey });
+      return new GoogleGenerativeAI(apiKey);
     } catch (error) {
       console.warn('Failed to initialize Gemini client from provided key:', error.message);
       return null;
@@ -82,28 +82,13 @@ async function getClient(apiKey) {
 
 async function requestJSONResponse(client, systemPrompt, userPrompt, temperature = 0.4) {
   if (!client) return null;
-  const prompt = `${systemPrompt}\n\nUSER_UPDATE:\n${userPrompt}`;
-  const response = await client.models.generateContent({
+  const model = client.getGenerativeModel({
     model: getGoogleModel(),
-    contents: [
-      {
-        role: 'user',
-        parts: [{ text: prompt }]
-      }
-    ],
-    generationConfig: {
-      temperature,
-      maxOutputTokens: 1024
-    }
+    systemInstruction: systemPrompt,
+    generationConfig: { temperature }
   });
-  const textChunk =
-    (typeof response.text === 'function' ? response.text() : response.text) ||
-    response?.output?.[0]?.content?.[0]?.text ||
-    (response?.candidates || [])
-      .flatMap(candidate => candidate.content?.parts || [])
-      .map(part => part.text || '')
-      .join('');
-  const text = (textChunk || '').trim();
+  const result = await model.generateContent(userPrompt);
+  const text = result?.response?.text()?.trim();
   if (!text) {
     throw new Error('Empty response from Gemini');
   }
@@ -381,9 +366,6 @@ function shouldAllowFallback() {
 
 export async function analyzeUpdate(text, gameState, apiKey) {
   const client = await getClient(apiKey);
-  if (!client) {
-    throw new Error('Gemini client unavailable');
-  }
   
   const contextPrompt = `Company: ${gameState.company.name} (${gameState.company.industry}, ${gameState.company.tech})
 Founder traits: ${gameState.traits.join(', ') || 'none'}
@@ -393,9 +375,18 @@ Current meters: Ethics ${gameState.meters.ethics}, Burnout ${gameState.meters.bu
 Founder update:
 "${text}"`;
 
-  const parsed = await requestJSONResponse(
-    client,
-    `You interpret founder updates for a burnout management sim.
+  try {
+    if (!client) {
+      if (!shouldAllowFallback()) {
+        throw new Error('Gemini client unavailable');
+      }
+      const fallback = heuristicScores(text);
+      fallback.source = 'heuristic';
+      return fallback;
+    }
+    const parsed = await requestJSONResponse(
+      client,
+      `You interpret founder updates for a burnout management sim.
 Return strict JSON with:
 - "sentiment" (0-100)
 - "buzzword" (0-100)
@@ -405,23 +396,39 @@ Return strict JSON with:
 - "scenario": {"title": "headline tied to the update", "description": "2 tight sentences referencing exact details", "hook": "call-to-action"}
 
 Ground EVERYTHING in the provided text/context. No generic archetypes. Output ONLY raw JSON.`,
-    contextPrompt
-  );
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Invalid response from Gemini');
+      contextPrompt
+    );
+    if (typeof parsed === 'object' && parsed) {
+      parsed.source = 'gemini';
+      parsed.intent = parsed.intent || inferIntentFromText(text);
+      if (!parsed.meterDeltas) {
+        parsed.meterDeltas = fallbackMeterDeltas(parsed.intent, text, parsed.sentiment ?? 50, parsed.buzzword ?? 50, parsed.feasibility ?? 55);
+      }
+      if (!parsed.scenario) {
+        parsed.scenario = INTENT_SNIPPETS[parsed.intent] || INTENT_SNIPPETS.default;
+      }
+    }
+    return parsed;
+  } catch (error) {
+    console.error('OpenAI analysis error:', error);
+    if (!shouldAllowFallback()) {
+      throw error;
+    }
+    return heuristicScores(text);
   }
-
-  parsed.source = 'gemini';
-  return parsed;
 }
 
 // NPC quips when the model is unreachable.
+function fallbackDialogue(meters) {
+  const fundingScore = (meters.funding || 0) / 100;
+  return {
+    vc: fundingScore > 0.6 ? "Runway story is working. Keep pushing." : "Not seeing the cash pop yet.",
+    employee: meters.burnout > 60 ? "We're burning out." : "Managing for now."
+  };
+}
+
 export async function generateNPCDialogue(gameState, deltas, intentHint, apiKey) {
   const client = await getClient(apiKey);
-  if (!client) {
-    throw new Error('Gemini client unavailable');
-  }
   
   const { meters } = gameState;
   const vcMood = gameState.narrative?.npc?.vcMood ?? 0;
@@ -441,29 +448,68 @@ Metrics (with changes):
 Return this exact JSON format:
 {"vc": "VC's comment here", "employee": "Employee's comment here"}`;
 
-  const parsed = await requestJSONResponse(
-    client,
-    `You write darkly comedic NPC dialogue for a founder burnout simulator.
+  try {
+    if (!client) {
+      if (!shouldAllowFallback()) throw new Error('Gemini client unavailable');
+      return fallbackDialogue(meters);
+    }
+    const parsed = await requestJSONResponse(
+      client,
+      `You write darkly comedic NPC dialogue for a founder burnout simulator.
 
 VC Character: Transactional venture capitalist. Speaks in clichés like "circle back," "runway," "traction." Enthusiastic only when metrics spike. Dismissive when numbers drop. Maximum 15 words.
 
 Employee Character: Burnt-out but honest. Uses informal language. Supportive when things go well, but blunt about unsustainable pace. Maximum 18 words.
 
 Never break character. Output ONLY the requested JSON format.`,
-    prompt,
-    0.5
-  );
-  if (!parsed || !parsed.vc || !parsed.employee) {
-    throw new Error('Invalid NPC response from Gemini');
+      prompt,
+      0.5
+    );
+    if (parsed) return parsed;
+    return fallbackDialogue(meters);
+  } catch (error) {
+    console.error('Gemini NPC error:', error);
+    return fallbackDialogue(meters);
   }
-  return parsed;
+}
+
+function heuristicInsights(updateText, deltas, nlp) {
+  const headlineOptions = [
+    'Tiny startup makes cautious progress',
+    'Investors squint at the metrics',
+    'Team grinds while hype cools',
+    'Weekend slide deck gains dust'
+  ];
+  const burnoutHigh = deltas.burnout > 6 || nlp.sentiment < 45;
+  const fundingPop = deltas.funding > 8;
+  const intent = nlp.intent || inferIntentFromText(updateText);
+  
+  const tip = burnoutHigh
+    ? 'Dial back sprinting before morale snaps.'
+    : fundingPop
+      ? 'Double down on narrative while momentum lasts.'
+      : intent === 'ethics'
+        ? 'Document the reforms before cynicism creeps back.'
+        : 'Pick one priority this week and over-resource it.';
+  
+  const buzz = (updateText.match(/\bAI|LLM|automation|platform|viral|growth\b/gi) || []).length;
+  const headline = buzz > 1
+    ? 'Buzzwords fly, traction TBD'
+    : headlineOptions[Math.floor(Math.random() * headlineOptions.length)];
+  
+  return { tip, headline, source: 'heuristic' };
 }
 
 export async function generateInsights(gameState, deltas, nlp, updateText, apiKey) {
   const client = await getClient(apiKey);
+  
   if (!client) {
-    throw new Error('Gemini client unavailable');
+    if (!shouldAllowFallback()) {
+      throw new Error('Gemini client unavailable');
+    }
+    return heuristicInsights(updateText, deltas, nlp);
   }
+  
   const prompt = `Advisor briefing for founder update.
 
 Company: ${gameState.company.name || 'Unnamed'} (${gameState.company.industry}, ${gameState.company.tech})
@@ -477,23 +523,30 @@ Update text: "${updateText}"
 
 Return JSON: {"tip": "advisor tip", "headline": "news headline"}`;
   
-  const parsed = await requestJSONResponse(
-    client,
-    `You are a seasoned startup board advisor and tech journalist rolled into one.
+  try {
+    const parsed = await requestJSONResponse(
+      client,
+      `You are a seasoned startup board advisor and tech journalist rolled into one.
 
 From the exact update text plus the latest meters/deltas, craft:
 - A concise, punchy advisor tip (<= 18 words) grounded in the real situation.
 - A newsy headline (<= 12 words) that echoes how the outside world would report it.
 
 Tone: darkly witty but actionable. Output ONLY JSON.`,
-    prompt,
-    0.4
-  );
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Invalid insight response from Gemini');
+      prompt,
+      0.4
+    );
+    if (typeof parsed === 'object' && parsed) {
+      parsed.source = 'gemini';
+    }
+    return parsed;
+  } catch (error) {
+    console.error('Gemini insight error:', error);
+    if (!shouldAllowFallback()) {
+      throw error;
+    }
+    return heuristicInsights(updateText, deltas, nlp);
   }
-  parsed.source = 'gemini';
-  return parsed;
 }
 
 function fallbackSceneCard(updateText, nlp, deltas, milestoneEvents) {
